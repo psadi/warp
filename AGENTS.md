@@ -51,15 +51,16 @@
 - Parses `~/.ssh/config` for SSH host definitions
 - Supports SSH config `Include` directives (recursive)
 - FZF integration for interactive fuzzy host selection
-- Preview window showing host configuration
-- Connection testing with timeout
+- Preview window showing host configuration and connection test
+- SSH key selection from `~/.ssh/` with fingerprint preview
 - Cross-platform: Linux, macOS, Windows
 - CSV export/import for backup
 - Host editing with current value display
 - Shell integration with aliases and SSH wrapper
+- `--select` flag for SSH wrapper usage
 
 ## Notes
 - Pure Go implementation
 - SSH config file location: `~/.ssh/config` (Linux/macOS), `%USERPROFILE%\ssh\config` (Windows)
-- FZF must be installed separately on the system
-- No database - uses native SSH config file
+- FZF auto-installed if missing
+
