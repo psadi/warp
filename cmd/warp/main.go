@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -112,10 +113,13 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 
 	fmt.Println("\nSelect SSH key:")
 
+	previewScript := generateKeyPreviewScript()
+
 	selected, err := fzf.Select(options, fzf.NewOptions().
 		WithPrompt("Select key> ").
 		WithHeight("40%").
-		WithPreview(""))
+		WithPreviewWindow("right:50%:wrap").
+		WithPreview(previewScript))
 
 	if err != nil {
 		fmt.Println("Selection cancelled")
@@ -133,6 +137,18 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 	}
 
 	return ""
+}
+
+func generateKeyPreviewScript() string {
+	execPath, err := os.Executable()
+	if err != nil {
+		execPath = "warp"
+	}
+	var sb strings.Builder
+	sb.WriteString("'")
+	sb.WriteString(execPath)
+	sb.WriteString("' --preview-key {}")
+	return sb.String()
 }
 
 func readInput(reader *bufio.Reader, prompt string) string {
@@ -163,6 +179,11 @@ func main() {
 			os.Exit(1)
 		}
 		showPreview(hosts, os.Args[2])
+		os.Exit(0)
+	}
+
+	if os.Args[1] == "--preview-key" && len(os.Args) == 3 {
+		showKeyPreview(os.Args[2])
 		os.Exit(0)
 	}
 
@@ -1260,6 +1281,42 @@ func generatePreviewScript() string {
 	sb.WriteString(execPath)
 	sb.WriteString("' --preview {}")
 	return sb.String()
+}
+
+func showKeyPreview(keyName string) {
+	keyName = strings.TrimSpace(keyName)
+
+	if keyName == "(none)" || keyName == "" {
+		fmt.Println("No key selected")
+		return
+	}
+
+	home, _ := os.UserHomeDir()
+	var keyPath string
+
+	if strings.HasPrefix(keyName, "~/.ssh/") {
+		keyPath = filepath.Join(home, ".ssh", strings.TrimPrefix(keyName, "~/.ssh/"))
+	} else if strings.HasPrefix(keyName, "Keep current:") {
+		keyPath = strings.TrimPrefix(strings.TrimSpace(keyName), "Keep current:")
+	} else if strings.Contains(keyName, "/") {
+		keyPath = keyName
+	} else {
+		keyPath = filepath.Join(home, ".ssh", keyName)
+	}
+
+	keyPath = strings.ReplaceAll(keyPath, "~", home)
+
+	fmt.Println("Key:", keyName)
+	fmt.Println("Path:", keyPath)
+	fmt.Println()
+
+	cmd := exec.Command("ssh-keygen", "-l", "-f", keyPath)
+	output, err := cmd.Output()
+	if err == nil {
+		fmt.Println(string(output))
+	} else {
+		fmt.Println("Could not read key info")
+	}
 }
 
 func showPreview(hosts []config.Host, hostName string) {
