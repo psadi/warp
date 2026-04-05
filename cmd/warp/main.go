@@ -100,7 +100,7 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 
 	if currentValue != "" {
 		options = append(options, "Keep current: "+currentValue)
-		keyPaths = append(keyPaths, "")
+		keyPaths = append(keyPaths, currentValue)
 	}
 	options = append(options, "(none)")
 	keyPaths = append(keyPaths, "")
@@ -109,8 +109,6 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 		options = append(options, displayPath)
 		keyPaths = append(keyPaths, displayPath)
 	}
-	options = append(options, "Enter custom path")
-	keyPaths = append(keyPaths, "")
 
 	fmt.Println("\nSelect SSH key:")
 
@@ -128,40 +126,13 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 		return ""
 	}
 
-	if strings.HasPrefix(selected, "Keep current:") {
-		return currentValue
+	for i, opt := range options {
+		if opt == selected {
+			return keyPaths[i]
+		}
 	}
 
-	if selected == "Enter custom path" {
-		home, _ := os.UserHomeDir()
-		defaultPath := filepath.Join(home, ".ssh")
-
-		files, _ := filepath.Glob(filepath.Join(defaultPath, "*"))
-		var keyFiles []string
-		for _, f := range files {
-			if strings.HasSuffix(f, ".pub") {
-				continue
-			}
-			if _, pubErr := os.Stat(f + ".pub"); pubErr == nil {
-				keyFiles = append(keyFiles, filepath.Base(f))
-			}
-		}
-
-		if len(keyFiles) > 0 {
-			fmt.Println("\nSelect from ~/.ssh/:")
-			chosen, _ := fzf.Select(keyFiles, fzf.NewOptions().
-				WithPrompt("Select file> ").
-				WithHeight("40%"))
-			if chosen != "" {
-				return filepath.Join(defaultPath, chosen)
-			}
-		}
-
-		fmt.Println("\nEnter full path to identity file:")
-		return readInput(reader, "> ")
-	}
-
-	return selected
+	return ""
 }
 
 func readInput(reader *bufio.Reader, prompt string) string {
