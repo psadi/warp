@@ -133,48 +133,32 @@ func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 	}
 
 	if selected == "Enter custom path" {
-		fmt.Println("\nEnter path or press Enter to browse with FZF:")
-
-		dirPrompt := "Path (~/.ssh/): "
 		home, _ := os.UserHomeDir()
 		defaultPath := filepath.Join(home, ".ssh")
-		path := readInput(reader, dirPrompt)
 
-		if path == "" {
-			path = defaultPath
-		}
-
-		path = strings.ReplaceAll(path, "~", home)
-		if path == home {
-			path = filepath.Join(home, ".ssh")
-		}
-
-		if stat, err := os.Stat(path); err == nil && stat.IsDir() {
-			files, _ := filepath.Glob(filepath.Join(path, "*"))
-			var keyFiles []string
-			for _, f := range files {
-				if strings.HasSuffix(f, ".pub") {
-					continue
-				}
-				if _, pubErr := os.Stat(f + ".pub"); pubErr == nil {
-					keyFiles = append(keyFiles, filepath.Base(f))
-				}
+		files, _ := filepath.Glob(filepath.Join(defaultPath, "*"))
+		var keyFiles []string
+		for _, f := range files {
+			if strings.HasSuffix(f, ".pub") {
+				continue
 			}
-			if len(keyFiles) > 0 {
-				selected, _ := fzf.Select(keyFiles, fzf.NewOptions().
-					WithPrompt("Select file> ").
-					WithHeight("40%"))
-				if selected != "" {
-					return filepath.Join(path, selected)
-				}
+			if _, pubErr := os.Stat(f + ".pub"); pubErr == nil {
+				keyFiles = append(keyFiles, filepath.Base(f))
 			}
 		}
 
-		if _, err := os.Stat(path); err == nil {
-			return path
+		if len(keyFiles) > 0 {
+			fmt.Println("\nSelect from ~/.ssh/:")
+			chosen, _ := fzf.Select(keyFiles, fzf.NewOptions().
+				WithPrompt("Select file> ").
+				WithHeight("40%"))
+			if chosen != "" {
+				return filepath.Join(defaultPath, chosen)
+			}
 		}
 
-		return readInput(reader, "Enter full path: ")
+		fmt.Println("\nEnter full path to identity file:")
+		return readInput(reader, "> ")
 	}
 
 	return selected
