@@ -65,6 +65,83 @@ func validateHostNameForSSH(name string) error {
 	return nil
 }
 
+func getSSHKeys() []string {
+	home, _ := os.UserHomeDir()
+	sshDir := filepath.Join(home, ".ssh")
+
+	var keys []string
+	entries, err := os.ReadDir(sshDir)
+	if err != nil {
+		return keys
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".pub") || name == "known_hosts" || name == "config" || name == "authorized_keys" {
+			continue
+		}
+		privKey := filepath.Join(sshDir, name)
+		pubKey := privKey + ".pub"
+		if _, err := os.Stat(pubKey); err == nil {
+			keys = append(keys, name)
+		}
+	}
+	return keys
+}
+
+func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
+	keys := getSSHKeys()
+
+	fmt.Println("\nAvailable SSH keys in ~/.ssh/:")
+
+	var options []string
+	if currentValue != "" {
+		options = append(options, "Keep current: "+currentValue)
+	}
+	options = append(options, "(none)")
+	for _, key := range keys {
+		displayPath := "~/.ssh/" + key
+		if currentValue == displayPath || currentValue == key || currentValue == "~/.ssh/"+key {
+			options = append(options, displayPath+" (current)")
+		} else {
+			options = append(options, displayPath)
+		}
+	}
+	options = append(options, "Enter custom path")
+
+	fmt.Println()
+	for i, opt := range options {
+		fmt.Printf("  %d) %s\n", i+1, opt)
+	}
+	fmt.Println()
+
+	fmt.Print("Select option (1-" + strconv.Itoa(len(options)) + "): ")
+	choice := readInput(reader, "")
+	num, err := strconv.Atoi(choice)
+	if err != nil || num < 1 || num > len(options) {
+		fmt.Println("Invalid selection, using (none)")
+		return ""
+	}
+
+	selected := options[num-1]
+
+	if strings.HasPrefix(selected, "Keep current:") {
+		return currentValue
+	}
+	if selected == "(none)" {
+		return ""
+	}
+	if selected == "Enter custom path" {
+		fmt.Print("Enter custom identity file path: ")
+		return readInput(reader, "")
+	}
+
+	return selected
+}
+
 func readInput(reader *bufio.Reader, prompt string) string {
 	fmt.Print(prompt)
 	input, err := reader.ReadString('\n')
@@ -911,7 +988,7 @@ func addHost(hosts []config.Host, csvFile string) {
 		os.Exit(1)
 	}
 
-	identityFile = readInput(reader, "Identity file (e.g., ~/.ssh/id_rsa): ")
+	identityFile = promptIdentityFile(reader, "")
 
 	newHost := config.Host{
 		Name:         name,
@@ -1159,7 +1236,7 @@ func editHost(hosts []config.Host, hostName string) {
 	}
 
 	currentIdentity := targetHost.IdentityFile
-	newIdentity := readInput(reader, fmt.Sprintf("Identity file (current: %s): ", currentIdentity))
+	newIdentity := promptIdentityFile(reader, currentIdentity)
 	if newIdentity == "" {
 		newIdentity = currentIdentity
 	}
