@@ -18,6 +18,7 @@ import (
 type connectFlags struct {
 	sshDebug     bool
 	sshExtraArgs string
+	selectOnly   bool
 }
 
 func validatePort(port string) error {
@@ -175,6 +176,8 @@ func parseConnectFlags() connectFlags {
 				flags.sshExtraArgs = args[i+1]
 				i++
 			}
+		case "--select":
+			flags.selectOnly = true
 		}
 	}
 	return flags
@@ -676,12 +679,13 @@ alias cr='WARP_EXE remove'
 
 # SSH wrapper
 ssh() {
-    local host=$(WARP_EXE connect 2>/dev/null)
+    local host=$(__SELECT_HOST__ 2>/dev/null)
     if [ -n "$host" ]; then
         command ssh "$host" "$@"
     fi
 }
 `, "WARP_EXE", exePath, -1)
+		output = strings.Replace(output, "__SELECT_HOST__", exePath+" connect --select", -1)
 		fmt.Print(output)
 	case "zsh":
 		output := strings.Replace(`# Warp shell integration for zsh
@@ -726,12 +730,13 @@ alias cr='WARP_EXE remove'
 
 # SSH wrapper
 ssh() {
-    local host=$(WARP_EXE connect 2>/dev/null)
+    local host=$(__SELECT_HOST__ 2>/dev/null)
     if [ -n "$host" ]; then
         command ssh "$host" "$@"
     fi
 }
 `, "WARP_EXE", exePath, -1)
+		output = strings.Replace(output, "__SELECT_HOST__", exePath+" connect --select", -1)
 		fmt.Print(output)
 	case "fish":
 		output := strings.Replace(`# Warp shell integration for fish
@@ -760,12 +765,13 @@ alias cr='WARP_EXE remove'
 
 # SSH wrapper
 function ssh
-    set -l host (WARP_EXE connect 2>/dev/null)
+    set -l host (__SELECT_HOST__ 2>/dev/null)
     if test -n "$host"
         command ssh $host $argv
     end
 end
 `, "WARP_EXE", exePath, -1)
+		output = strings.Replace(output, "__SELECT_HOST__", exePath+" connect --select", -1)
 		fmt.Print(output)
 	}
 }
@@ -787,8 +793,16 @@ func connectToHost(hosts []config.Host, flags connectFlags) {
 	}
 
 	if selected == "" {
+		if flags.selectOnly {
+			os.Exit(1)
+		}
 		fmt.Println("No host selected")
 		os.Exit(0)
+	}
+
+	if flags.selectOnly {
+		fmt.Print(selected)
+		return
 	}
 
 	fmt.Println("\nConnecting to:", selected)

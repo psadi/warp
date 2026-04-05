@@ -97,18 +97,9 @@ warp export         # Export to CSV (alias: e)
 warp export --file ~/hosts.csv
 ```
 
-### Shell Integration
-```bash
-eval "$(warp --zsh)"    # Add zsh integration to ~/.zshrc
-eval "$(warp --bash)"   # Add bash integration to ~/.bashrc
-eval (warp --fish)      # Add fish integration to ~/.config/fish/config.fish
-```
-
 ***
 
 ## Shell Integration
-
-Add to your shell config for aliases and SSH wrapper:
 
 ```bash
 # bash/zsh
