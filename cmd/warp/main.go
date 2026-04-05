@@ -149,6 +149,11 @@ func main() {
 		}
 		hostName := parseEditFlags()
 		editHost(hosts, hostName)
+	case "shell-config", "completion":
+		printShellConfig(os.Args[2:])
+	case "--bash", "--zsh", "--fish":
+		shell := strings.TrimPrefix(cmd, "--")
+		printShellConfig(append([]string{"--" + shell}, os.Args[2:]...))
 	case "help", "h":
 		printUsage()
 	default:
@@ -312,7 +317,7 @@ func printEditHelp() {
 }
 
 func printUsage() {
-	fmt.Println("Warp! - SSH connection manager")
+	fmt.Println("Warp! - SSH Fuzzy launcher")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  warp connect [options]    Connect to a host (alias: c)")
@@ -322,7 +327,447 @@ func printUsage() {
 	fmt.Println("  warp remove               Remove hosts (alias: rm)")
 	fmt.Println("  warp export [options]     Export hosts to CSV (alias: e)")
 	fmt.Println()
+	fmt.Println("Shell Integration:")
+	fmt.Println("  warp --zsh [-i]         Show/install zsh config")
+	fmt.Println("  warp --bash [-i]        Show/install bash config")
+	fmt.Println("  warp --fish [-i]        Show/install fish config")
+	fmt.Println()
 	fmt.Println("Run 'warp <command> --help' for more information on a command.")
+}
+
+func installCompletions(shell, exePath string) {
+	switch shell {
+	case "bash":
+		home, _ := os.UserHomeDir()
+		bashrc := filepath.Join(home, ".bashrc")
+		content := fmt.Sprintf(`# Warp shell integration for bash
+# Added by warp
+alias c='%s connect'
+alias cl='%s list'
+alias ca='%s add'
+alias ce='%s edit'
+alias cr='%s remove'
+
+ssh() {
+    local host=$(%s connect 2>/dev/null)
+    if [ -n "$host" ]; then
+        command ssh "$host" "$@"
+    fi
+}
+
+# Warp completions
+source ~/.local/share/warp/completions/warp.bash
+`, exePath, exePath, exePath, exePath, exePath, exePath)
+
+		installPath := filepath.Join(home, ".local", "share", "warp", "completions")
+		os.MkdirAll(installPath, 0755)
+		os.WriteFile(filepath.Join(installPath, "warp.bash"), []byte(`_warp_hosts() {
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    local hosts=$(warp list 2>/dev/null | tail -n +3 | awk '{print $1}')
+    COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+}
+
+_warp() {
+    local commands="connect c list ls add a edit ed remove rm export e shell-config"
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+}
+
+complete -F _warp warp
+complete -F _warp_hosts c
+`), 0644)
+
+		if _, err := os.Stat(bashrc); os.IsNotExist(err) {
+			os.WriteFile(bashrc, []byte(content), 0644)
+		} else {
+			data, _ := os.ReadFile(bashrc)
+			if !strings.Contains(string(data), "# Warp shell integration") {
+				f, _ := os.OpenFile(bashrc, os.O_APPEND|os.O_WRONLY, 0644)
+				f.WriteString("\n" + content)
+				f.Close()
+			}
+		}
+		fmt.Printf("✓ Installed bash completions\n")
+		fmt.Printf("  Config: %s\n", bashrc)
+
+	case "zsh":
+		home, _ := os.UserHomeDir()
+		zshrc := filepath.Join(home, ".zshrc")
+		compDir := filepath.Join(home, ".local", "share", "zsh", "site-functions")
+		os.MkdirAll(compDir, 0755)
+
+		content := fmt.Sprintf(`# Warp shell integration for zsh
+# Added by warp
+alias c='%s connect'
+alias cl='%s list'
+alias ca='%s add'
+alias ce='%s edit'
+alias cr='%s remove'
+
+ssh() {
+    local host=$(%s connect 2>/dev/null)
+    if [ -n "$host" ]; then
+        command ssh "$host" "$@"
+    fi
+}
+
+# Warp completions
+fpath=(~/.local/share/warp/completions $fpath)
+autoload -Uz _warp
+`, exePath, exePath, exePath, exePath, exePath, exePath)
+
+		installPath := filepath.Join(home, ".local", "share", "warp", "completions")
+		os.MkdirAll(installPath, 0755)
+		os.WriteFile(filepath.Join(installPath, "_warp"), []byte(`#compdef _warp warp
+
+_warp_hosts() {
+    local -a hosts
+    hosts=($(warp list 2>/dev/null | tail -n +3 | awk '{print $1}'))
+    _describe 'hosts' hosts
+}
+
+_warp_commands() {
+    local -a commands
+    commands=(
+        'connect:Connect to a host'
+        'list:List all hosts'
+        'add:Add a host'
+        'edit:Edit a host'
+        'remove:Remove hosts'
+        'export:Export to CSV'
+        'shell-config:Shell integration'
+    )
+    _describe 'commands' commands
+}
+
+_warp() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '-h[Show help]' \
+        '--help[Show help]' \
+        '*::command:_warp_commands'
+}
+
+_warp
+`), 0644)
+
+		if _, err := os.Stat(zshrc); os.IsNotExist(err) {
+			os.WriteFile(zshrc, []byte(content), 0644)
+		} else {
+			data, _ := os.ReadFile(zshrc)
+			if !strings.Contains(string(data), "# Warp shell integration") {
+				f, _ := os.OpenFile(zshrc, os.O_APPEND|os.O_WRONLY, 0644)
+				f.WriteString("\n" + content)
+				f.Close()
+			}
+		}
+
+		os.WriteFile(filepath.Join(compDir, "_warp"), []byte(`#compdef _warp warp
+_warp_hosts() {
+    local -a hosts
+    hosts=($(warp list 2>/dev/null | tail -n +3 | awk '{print $1}'))
+    _describe 'hosts' hosts
+}
+_warp_commands() {
+    local -a commands
+    commands=(
+        'connect:Connect to a host'
+        'list:List all hosts'
+        'add:Add a host'
+        'edit:Edit a host'
+        'remove:Remove hosts'
+        'export:Export to CSV'
+        'shell-config:Shell integration'
+    )
+    _describe 'commands' commands
+}
+_warp() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+    _arguments -C '-h[Show help]' '--help[Show help]' '*::command:_warp_commands'
+}
+_warp
+`), 0644)
+
+		fmt.Printf("✓ Installed zsh completions\n")
+		fmt.Printf("  Config: %s\n", zshrc)
+		fmt.Printf("  Completions: %s/_warp\n", compDir)
+
+	case "fish":
+		home, _ := os.UserHomeDir()
+		fishConfig := filepath.Join(home, ".config", "fish", "config.fish")
+		compDir := filepath.Join(home, ".config", "fish", "completions")
+		os.MkdirAll(compDir, 0755)
+
+		content := fmt.Sprintf(`# Warp shell integration for fish
+# Added by warp
+alias c='%s connect'
+alias cl='%s list'
+alias ca='%s add'
+alias ce='%s edit'
+alias cr='%s remove'
+
+function ssh
+    set -l host (%s connect 2>/dev/null)
+    if test -n "$host"
+        command ssh $host $argv
+    end
+end
+`, exePath, exePath, exePath, exePath, exePath, exePath)
+
+		if _, err := os.Stat(fishConfig); os.IsNotExist(err) {
+			os.MkdirAll(filepath.Join(home, ".config", "fish"), 0755)
+			os.WriteFile(fishConfig, []byte(content), 0644)
+		} else {
+			data, _ := os.ReadFile(fishConfig)
+			if !strings.Contains(string(data), "# Warp shell integration") {
+				f, _ := os.OpenFile(fishConfig, os.O_APPEND|os.O_WRONLY, 0644)
+				f.WriteString("\n" + content)
+				f.Close()
+			}
+		}
+
+		os.WriteFile(filepath.Join(compDir, "warp.fish"), []byte(`complete -c warp -f -a "connect c list ls add a edit ed remove rm export e shell-config"
+
+function __warp_hosts
+    warp list 2>/dev/null | tail -n +3 | awk '{print $1}' | while read -l host
+        echo $host
+    end
+end
+
+complete -c warp -f -n "__fish_seen_subcommand_from connect" -a "(__warp_hosts)"
+complete -c warp -f -n "__fish_seen_subcommand_from c" -a "(__warp_hosts)"
+`), 0644)
+
+		fmt.Printf("✓ Installed fish completions\n")
+		fmt.Printf("  Config: %s\n", fishConfig)
+		fmt.Printf("  Completions: %s/warp.fish\n", compDir)
+	}
+
+	fmt.Println()
+	fmt.Println("Restart your shell or run:")
+	fmt.Println("  source ~/.zshrc   # for zsh")
+	fmt.Println("  source ~/.bashrc   # for bash")
+}
+
+func detectShell() string {
+	sh := os.Getenv("SHELL")
+	if sh != "" {
+		if strings.Contains(sh, "zsh") {
+			return "zsh"
+		}
+		if strings.Contains(sh, "bash") {
+			return "bash"
+		}
+		if strings.Contains(sh, "fish") {
+			return "fish"
+		}
+	}
+	return "bash"
+}
+
+func printShellConfig(args []string) {
+	shell := ""
+	install := false
+
+	for i, arg := range args {
+		lowered := strings.ToLower(arg)
+
+		if lowered == "--help" || lowered == "-h" {
+			fmt.Println("Usage: warp --<shell> [-i]")
+			fmt.Println()
+			fmt.Println("Show or install shell integration config.")
+			fmt.Println()
+			fmt.Println("Options:")
+			fmt.Println("  -i, --install   Install completions to system directories")
+			fmt.Println()
+			fmt.Println("Examples:")
+			fmt.Println("  warp --zsh               # Show zsh config")
+			fmt.Println("  warp --zsh -i            # Install zsh completions")
+			fmt.Println("  warp --bash -i           # Install bash completions")
+			fmt.Println()
+			fmt.Println("Shell completion paths:")
+			fmt.Println("  bash: ~/.bashrc")
+			fmt.Println("  zsh:  ~/.zshrc + ~/.local/share/zsh/site-functions/_warp")
+			fmt.Println("  fish: ~/.config/fish/config.fish")
+			os.Exit(0)
+		}
+
+		if lowered == "--install" || lowered == "-i" || lowered == "install" {
+			install = true
+			continue
+		}
+
+		if lowered == "--bash" || lowered == "--zsh" || lowered == "--fish" {
+			shell = lowered[2:]
+			continue
+		}
+
+		if lowered == "bash" || lowered == "zsh" || lowered == "fish" {
+			if shell == "" {
+				shell = lowered
+			}
+			continue
+		}
+
+		if i == 0 && shell == "" && install == false {
+			shell = detectShell()
+		}
+	}
+
+	if shell == "" {
+		shell = detectShell()
+	}
+
+	valid := false
+	for _, s := range []string{"bash", "zsh", "fish"} {
+		if shell == s {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		fmt.Fprintf(os.Stderr, "Unsupported shell: %s\n", shell)
+		fmt.Printf("Supported shells: %s\n", "bash, zsh, fish")
+		os.Exit(1)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "warp"
+	}
+
+	if install {
+		installCompletions(shell, exePath)
+		return
+	}
+
+	switch shell {
+	case "bash":
+		output := strings.Replace(`# Warp shell integration for bash
+# Auto-install completions if not present
+if [ ! -f ~/.local/share/warp/completions/warp.bash ]; then
+    mkdir -p ~/.local/share/warp/completions
+    cat > ~/.local/share/warp/completions/warp.bash << 'EOFBASH'
+_warp_hosts() {
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    local hosts=$(warp list 2>/dev/null | tail -n +3 | awk '{print $1}')
+    COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+}
+_warp() {
+    local commands="connect c list ls add a edit ed remove rm export e shell-config"
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+}
+complete -F _warp warp
+complete -F _warp_hosts c
+EOFBASH
+fi
+source ~/.local/share/warp/completions/warp.bash 2>/dev/null
+
+# Aliases
+alias c='WARP_EXE connect'
+alias cl='WARP_EXE list'
+alias ca='WARP_EXE add'
+alias ce='WARP_EXE edit'
+alias cr='WARP_EXE remove'
+
+# SSH wrapper
+ssh() {
+    local host=$(WARP_EXE connect 2>/dev/null)
+    if [ -n "$host" ]; then
+        command ssh "$host" "$@"
+    fi
+}
+`, "WARP_EXE", exePath, -1)
+		fmt.Print(output)
+	case "zsh":
+		output := strings.Replace(`# Warp shell integration for zsh
+# Auto-install completions if not present
+if [[ ! -f ~/.local/share/zsh/site-functions/_warp ]]; then
+    mkdir -p ~/.local/share/zsh/site-functions
+    cat > ~/.local/share/zsh/site-functions/_warp << 'EOFZSH'
+#compdef _warp warp
+_warp_hosts() {
+    local -a hosts
+    hosts=($(warp list 2>/dev/null | tail -n +3 | awk '{print $1}'))
+    _describe 'hosts' hosts
+}
+_warp_commands() {
+    local -a commands
+    commands=(
+        'connect:Connect to a host'
+        'list:List all hosts'
+        'add:Add a host'
+        'edit:Edit a host'
+        'remove:Remove hosts'
+        'export:Export to CSV'
+        'shell-config:Shell integration'
+    )
+    _describe 'commands' commands
+}
+_warp() {
+    local curcontext="$curcontext" state line
+    typeset -A opt_args
+    _arguments -C '-h[Show help]' '--help[Show help]' '*::command:_warp_commands'
+}
+_warp
+EOFZSH
+fi
+
+# Aliases
+alias c='WARP_EXE connect'
+alias cl='WARP_EXE list'
+alias ca='WARP_EXE add'
+alias ce='WARP_EXE edit'
+alias cr='WARP_EXE remove'
+
+# SSH wrapper
+ssh() {
+    local host=$(WARP_EXE connect 2>/dev/null)
+    if [ -n "$host" ]; then
+        command ssh "$host" "$@"
+    fi
+}
+`, "WARP_EXE", exePath, -1)
+		fmt.Print(output)
+	case "fish":
+		output := strings.Replace(`# Warp shell integration for fish
+# Auto-install completions if not present
+if not set -q WARP_INIT
+    set -gx WARP_INIT true
+    mkdir -p ~/.config/fish/completions
+    cat > ~/.config/fish/completions/warp.fish << 'EOFFISH'
+complete -c warp -f -a "connect c list ls add a edit ed remove rm export e shell-config"
+function __warp_hosts
+    warp list 2>/dev/null | tail -n +3 | awk '{print $1}' | while read -l host
+        echo $host
+    end
+end
+complete -c warp -f -n "__fish_seen_subcommand_from connect" -a "(__warp_hosts)"
+complete -c warp -f -n "__fish_seen_subcommand_from c" -a "(__warp_hosts)"
+EOFFISH
+end
+
+# Aliases
+alias c='WARP_EXE connect'
+alias cl='WARP_EXE list'
+alias ca='WARP_EXE add'
+alias ce='WARP_EXE edit'
+alias cr='WARP_EXE remove'
+
+# SSH wrapper
+function ssh
+    set -l host (WARP_EXE connect 2>/dev/null)
+    if test -n "$host"
+        command ssh $host $argv
+    end
+end
+`, "WARP_EXE", exePath, -1)
+		fmt.Print(output)
+	}
 }
 
 func connectToHost(hosts []config.Host, flags connectFlags) {

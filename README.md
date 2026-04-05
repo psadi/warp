@@ -1,34 +1,45 @@
+# Warp! - SSH Fuzzy launcher
+
 <p align="center">
-<h1 align="center">Warp! - Your lazy command line ssh helper</h1>
+  <h1 align="center">Warp! - SSH Fuzzy launcher</h1>
 
-![](https://img.shields.io/badge/license-MIT-green.svg?style=flat)
-<a href="https://www.buymeacoffee.com/addy3494" target="_blank"><img src="https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat&logo=go" ></a>
+  ![](https://img.shields.io/badge/license-MIT-green.svg?style=flat)
+  <a href="https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go"></a>
 
-*Manage your infrastructure, Never loose/forget passwords again.*
+  *Select and connect to your servers with fuzzy search.*
+</p>
 
 ***
-## Key Features:
+
+## Key Features
 - Parses your existing `~/.ssh/config` file
 - Supports SSH config `Include` directives (recursive)
-- Interactive host selection with FZF
+- Fuzzy host selection with FZF
 - Preview window showing host configuration
 - Connection testing with timeout
 - Cross-platform: Linux, macOS, Windows
 - CSV export/import for backup
 - Host editing with current value display
+- Shell integration with aliases and SSH wrapper
 
 ***
+
+## Quick Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/psadi/warp/main/install.sh | bash
+```
+
+This installs warp and fzf (if not present) to `~/.local/bin/`.
+
+***
+
 ## Requirements
-- Go 1.19+
-- FZF (fuzzy finder)
-
-### Install FZF
-- **Linux**: `sudo apt install fzf` or use your package manager
-- **macOS**: `brew install fzf`
-- **Windows**: `choco install fzf` or `winget install fzf`
+- FZF (fuzzy finder) - auto-installed if missing
 
 ***
-## Build
+
+## Build from Source
 
 ```bash
 # Clone and build
@@ -48,85 +59,101 @@ go build -ldflags="-s -w" -o warp ./cmd/warp/
 ```
 
 ***
+
 ## Usage
 
+### Connect
 ```bash
-# Connect to a host (interactive selection)
-warp connect
-warp c
-
-# Connect with SSH debug
-warp connect --ssh-debug
-
-# Connect with extra SSH args
+warp connect        # Interactive selection (alias: c)
+warp connect --ssh-debug              # Enable SSH debug mode
 warp connect --ssh-extra-args "-o StrictHostKeyChecking=no"
+```
 
-# List all hosts
-warp list
-warp ls
+### List
+```bash
+warp list           # List all hosts (alias: ls)
+```
 
-# Add a new host (interactive prompts)
-warp add
-warp a
+### Add
+```bash
+warp add            # Interactive prompts (alias: a)
+warp add --file hosts.csv            # Import from CSV
+```
 
-# Import hosts from CSV
-warp add --file hosts.csv
-warp a -f hosts.csv
+### Edit
+```bash
+warp edit           # Interactive selection (alias: ed)
+warp edit -n myserver               # Edit specific host
+```
 
-# Edit an existing host
-warp edit
-warp ed
+### Remove
+```bash
+warp remove         # Multi-select with FZF (alias: rm)
+```
 
-# Edit specific host
-warp edit -n myserver
-warp edit --host myserver
-
-# Remove hosts (multi-select with FZF)
-warp remove
-warp rm
-
-# Export hosts to CSV
-warp export
-warp e
+### Export
+```bash
+warp export         # Export to CSV (alias: e)
 warp export --file ~/hosts.csv
+```
 
-# Show help for any command
-warp connect --help
-warp add --help
+### Shell Integration
+```bash
+eval "$(warp --zsh)"    # Add zsh integration to ~/.zshrc
+eval "$(warp --bash)"   # Add bash integration to ~/.bashrc
+eval (warp --fish)      # Add fish integration to ~/.config/fish/config.fish
 ```
 
 ***
+
+## Shell Integration
+
+Add to your shell config for aliases and SSH wrapper:
+
+```bash
+# bash/zsh
+eval "$(warp --zsh)"
+eval "$(warp --bash)"
+
+# fish
+eval (warp --fish)
+```
+
+This adds:
+- **Aliases**: `c` (connect), `cl` (list), `ca` (add), `ce` (edit), `cr` (remove)
+- **SSH wrapper**: Run `ssh` to select and connect to a host
+- **Completions**: Shell completions for commands and hosts (auto-installed)
+
+Install completions separately:
+```bash
+warp --zsh -i      # Install zsh completions
+warp --bash -i     # Install bash completions
+warp --fish -i     # Install fish completions
+```
+
+***
+
 ## How It Works
 
 Warp reads your SSH config from `~/.ssh/config` and provides an interactive interface using FZF for selecting hosts to connect to. No database required - it uses your existing SSH configuration.
 
 ***
+
 ## Disclaimer
 
-### This repository,
-* Is Created to tackle my personal use-case.
-* Is not production ready/safe.
-* Is just a wrapper *(quality-of-life improvements)* of the existing details which you already have.
-* Assumes you already have available connection for key-based auth and will not create/establish any.
-* Will not take any responsibility of damage-dealt/passwords-leaks etc. It is assumed you are using this package in a controlled environment.
+This tool assumes you already have SSH key-based authentication configured and will not create or manage keys.
 
 ***
+
 ## Contributing
-Bug reports and pull requests are welcome on GitHub at [warp]( https://github.com/psadi/warp ) repository.
 
-This project is intended to be a safe, welcoming space for collaboration and contributors are expected to adhere to the
-[Contributor Covenant](http://contributor-covenant.org) code of conduct.
-
-  1. Fork it ( https://github.com/psadi/warp )
-  1. Create your feature branch (`git checkout -b my-new-feature`)
-  1. Commit your changes (`git commit -am 'Add some feature'`)
-  1. Push to the branch (`git push origin my-new-feature`)
-  1. Create a new Pull Request
+Bug reports and pull requests are welcome on GitHub at [warp](https://github.com/psadi/warp) repository.
 
 ***
 
 ## Author
 * **psadi** - *Owner* - [psadi](https://github.com/psadi)
+
 ***
 
 The project is available as open source under the terms of the [MIT License](LICENSE)
