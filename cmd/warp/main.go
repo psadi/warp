@@ -95,45 +95,43 @@ func getSSHKeys() []string {
 func promptIdentityFile(reader *bufio.Reader, currentValue string) string {
 	keys := getSSHKeys()
 
-	fmt.Println("\nAvailable SSH keys in ~/.ssh/:")
-
 	var options []string
+	var keyPaths []string
+
 	if currentValue != "" {
 		options = append(options, "Keep current: "+currentValue)
+		keyPaths = append(keyPaths, "")
 	}
 	options = append(options, "(none)")
+	keyPaths = append(keyPaths, "")
 	for _, key := range keys {
 		displayPath := "~/.ssh/" + key
-		if currentValue == displayPath || currentValue == key || currentValue == "~/.ssh/"+key {
-			options = append(options, displayPath+" (current)")
-		} else {
-			options = append(options, displayPath)
-		}
+		options = append(options, displayPath)
+		keyPaths = append(keyPaths, displayPath)
 	}
 	options = append(options, "Enter custom path")
+	keyPaths = append(keyPaths, "")
 
-	fmt.Println()
-	for i, opt := range options {
-		fmt.Printf("  %d) %s\n", i+1, opt)
-	}
-	fmt.Println()
+	fmt.Println("\nSelect SSH key (FZF):")
 
-	fmt.Print("Select option (1-" + strconv.Itoa(len(options)) + "): ")
-	choice := readInput(reader, "")
-	num, err := strconv.Atoi(choice)
-	if err != nil || num < 1 || num > len(options) {
-		fmt.Println("Invalid selection, using (none)")
+	selected, err := fzf.Select(options, fzf.NewOptions().
+		WithPrompt("Select key> ").
+		WithHeight("40%").
+		WithPreview(""))
+
+	if err != nil {
+		fmt.Println("Selection cancelled")
 		return ""
 	}
 
-	selected := options[num-1]
+	if selected == "" || selected == "(none)" {
+		return ""
+	}
 
 	if strings.HasPrefix(selected, "Keep current:") {
 		return currentValue
 	}
-	if selected == "(none)" {
-		return ""
-	}
+
 	if selected == "Enter custom path" {
 		fmt.Print("Enter custom identity file path: ")
 		return readInput(reader, "")
