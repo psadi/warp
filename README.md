@@ -2,37 +2,104 @@
 <h1 align="center">Warp! - Your lazy command line ssh helper</h1>
 
 ![](https://img.shields.io/badge/license-MIT-green.svg?style=flat)
-<a href="https://www.buymeacoffee.com/addy3494" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 30px !important;width: 130px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
+<a href="https://www.buymeacoffee.com/addy3494" target="_blank"><img src="https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat&logo=go" ></a>
 
 *Manage your infrastructure, Never loose/forget passwords again.*
 
 ***
 ## Key Features:
-- One time setup, Initialize a local database to store all your infrastructure infomation
-- Supports all Linux, Unix, MacOS systems as authentication is via ssh
+- Parses your existing `~/.ssh/config` file
+- Supports SSH config `Include` directives (recursive)
+- Interactive host selection with FZF
+- Preview window showing host configuration
+- Connection testing with timeout
+- Cross-platform: Linux, macOS, Windows
+- CSV export/import for backup
+- Host editing with current value display
 
 ***
 ## Requirements
-- python3
+- Go 1.19+
+- FZF (fuzzy finder)
+
+### Install FZF
+- **Linux**: `sudo apt install fzf` or use your package manager
+- **macOS**: `brew install fzf`
+- **Windows**: `choco install fzf` or `winget install fzf`
+
 ***
-## Configure
-* VIA GIT
-  ```
-    git clone https://github.com/psadi/warp && cd warp
-    pip install -r requirements.txt
-    python3 /path/to/warp.py
-  ```
-* VIA PIP
-  ```
-    pip install warp-py
-    python3 -m warp (or) warp
-  ```
-* MANUAL INSTALL
-  ```
-    git clone https://github.com/psadi/warp && cd warp
-    python3 setup.py install
-    python3 -m warp
-  ```
+## Build
+
+```bash
+# Clone and build
+git clone https://github.com/psadi/warp && cd warp
+go build -o warp ./cmd/warp/
+
+# Install globally (optional)
+sudo mv warp /usr/local/bin/
+
+# Or add to PATH
+export PATH=$PATH:$(pwd)
+```
+
+### Release Build (smaller binary)
+```bash
+go build -ldflags="-s -w" -o warp ./cmd/warp/
+```
+
+***
+## Usage
+
+```bash
+# Connect to a host (interactive selection)
+warp connect
+warp c
+
+# Connect with SSH debug
+warp connect --ssh-debug
+
+# Connect with extra SSH args
+warp connect --ssh-extra-args "-o StrictHostKeyChecking=no"
+
+# List all hosts
+warp list
+warp ls
+
+# Add a new host (interactive prompts)
+warp add
+warp a
+
+# Import hosts from CSV
+warp add --file hosts.csv
+warp a -f hosts.csv
+
+# Edit an existing host
+warp edit
+warp ed
+
+# Edit specific host
+warp edit -n myserver
+warp edit --host myserver
+
+# Remove hosts (multi-select with FZF)
+warp remove
+warp rm
+
+# Export hosts to CSV
+warp export
+warp e
+warp export --file ~/hosts.csv
+
+# Show help for any command
+warp connect --help
+warp add --help
+```
+
+***
+## How It Works
+
+Warp reads your SSH config from `~/.ssh/config` and provides an interactive interface using FZF for selecting hosts to connect to. No database required - it uses your existing SSH configuration.
+
 ***
 ## Disclaimer
 
@@ -57,6 +124,7 @@ This project is intended to be a safe, welcoming space for collaboration and con
   1. Create a new Pull Request
 
 ***
+
 ## Author
 * **psadi** - *Owner* - [psadi](https://github.com/psadi)
 ***

@@ -1,0 +1,90 @@
+name: CI/Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [released]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            arch: amd64
+            needs_upx: true
+          - os: macos-latest
+            os_name: darwin
+            arch: arm64
+            needs_upx: false
+          - os: windows-latest
+            os_name: windows
+            arch: amd64
+            ext: .exe
+            needs_upx: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=$(git describe --tags --always --dirty | sed 's/^v//')" >> $GITHUB_OUTPUT
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Setup Go
+        run: mise use -g go@1.22
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build
+        id: build
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        shell: bash
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          NAME="warp-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}${{ matrix.ext || '' }}"
+          go build -ldflags="-s -w" -o "dist/$NAME" ./cmd/warp
+          echo "artifact_name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: Install upx
+        if: matrix.needs_upx == true
+        shell: bash
+        run: mise use -g upx@latest
+
+      - name: Compress with upx
+        if: matrix.needs_upx == true
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ steps.build.outputs.artifact_name }}
+        run: upx "dist/$ARTIFACT_NAME"
+
+      - name: Upload artifact (PR/push)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: dist/${{ steps.build.outputs.artifact_name }}
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.build.outputs.artifact_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
