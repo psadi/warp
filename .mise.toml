@@ -1,0 +1,69 @@
+[tools]
+go = "1.22"
+upx = { version = "latest", platforms = ["linux/amd64", "windows/amd64"] }
+syft = "latest"
+cosign = "latest"
+
+[tasks.lint]
+run = "test -z \"$(gofmt -l cmd internal)\" && go vet ./..."
+
+[tasks.test]
+run = "go test -race ./..."
+
+[tasks.build-all]
+env = { LDFLAGS = "-s -w" }
+run = """
+rm -rf dist && mkdir -p dist
+
+for PLATFORM in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+  GOOS=$(echo $PLATFORM | cut -d/ -f1)
+  GOARCH=$(echo $PLATFORM | cut -d/ -f2)
+  EXT=""
+  if [ "$GOOS" = "windows" ]; then
+    EXT=".exe"
+  fi
+  OUT="dist/warp-${GOOS}-${GOARCH}${EXT}"
+  echo "→ Building $OUT"
+  GOOS=$GOOS GOARCH=$GOARCH go build -trimpath -ldflags="$LDFLAGS" -o "$OUT" ./cmd/warp
+  if [ "$GOOS" = "linux" ] || [ "$GOOS" = "windows" ]; then
+    upx --best --lzma "$OUT" 2>/dev/null || true
+  fi
+done
+"""
+
+[tasks.package]
+description = "Create tar.gz archives per platform"
+run = """
+cd dist
+for dir in linux-*/ darwin-*/; do
+  if [ -d "$dir" ] || [ -f "warp-${dir%/-}" ]; then
+    continue
+  fi
+done
+
+for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+  OS=$(echo $platform | cut -d- -f1)
+  ARCH=$(echo $platform | cut -d- -f2)
+  BINARY="warp-${platform}"
+  if [ "$OS" = "windows" ]; then
+    BINARY="${BINARY}.exe"
+  fi
+  if [ -f "$BINARY" ]; then
+    echo "→ Packaging warp-${platform}"
+    if [ "$OS" = "windows" ]; then
+      tar -czf "warp-${platform}.tar.gz" "$BINARY" || true
+    else
+      tar -czf "warp-${platform}.tar.gz" "$BINARY"
+    fi
+    rm -f "$BINARY"
+  fi
+done
+"""
+
+[tasks.sbom-go]
+description = "Generate Go SBOM"
+run = "mkdir -p sbom && syft . -o json > sbom/sbom-go.json"
+
+[tasks.sbom-bin]
+description = "Generate binary SBOM"
+run = "mkdir -p sbom && syft dir:dist -o json > sbom/sbom-bin.json"

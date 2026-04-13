@@ -34,5 +34,8 @@ build/
 # Export files
 *_export.csv
 
-# Mise
-.mise.toml
+# Agent/Cache
+.agents/
+.codex/
+.cache/
+skills-lock.json

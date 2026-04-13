@@ -8,14 +8,14 @@ _Select and connect to your servers with fuzzy search._
 ## Key Features
 
 - Parses your existing `~/.ssh/config` file
-- Supports SSH config `Include` directives (recursive)
+- Supports SSH config `Include` directives, glob includes, quoted values, and multi-host aliases
 - Fuzzy host selection with FZF
-- Preview window showing host configuration and connection test
+- Preview window showing host configuration, DNS resolution, and cached connection test
 - SSH key selection from `~/.ssh/` with fingerprint preview
 - Cross-platform: Linux, macOS, Windows
 - CSV export/import for backup
 - Host editing with current value display
-- Shell integration with aliases and SSH wrapper
+- Shell integration with aliases and opt-in SSH wrapper
 
 ## Quick Install
 
@@ -64,7 +64,7 @@ go build -ldflags="-s -w" -o warp ./cmd/warp/
 
 ## Shell Integration
 
-Add to your shell config for aliases and SSH wrapper:
+Add to your shell config for aliases and shell helper:
 
 ```bash
 # bash/zsh
@@ -78,16 +78,25 @@ eval (warp --fish)
 This adds:
 
 - **Aliases**: `c` (connect), `cl` (list), `ca` (add), `ce` (edit), `cr` (remove)
-- **SSH wrapper**: Run `ssh` to select and connect to a host
+- **SSH helper**: Run `wssh` to select and connect to a host
 - **Completions**: Shell completions for commands and hosts (auto-installed)
+
+If you want old behavior and intentionally override `ssh`, use:
+
+```bash
+eval "$(warp --zsh --wrap-ssh)"
+```
 
 Install completions separately:
 
 ```bash
-warp --zsh -i      # Install zsh completions
-warp --bash -i      # Install bash completions
-warp --fish -i       # Install fish completions
+warp --zsh -i      # Install zsh integration
+warp --bash -i     # Install bash integration
+warp --fish -i     # Install fish integration
 ```
+
+For zsh, install honors `ZDOTDIR`. Warp writes config to `${ZDOTDIR:-$HOME}/.zshrc`
+and completions to `${ZDOTDIR:-$HOME}/completions/_warp`.
 
 ## How It Works
 

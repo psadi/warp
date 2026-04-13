@@ -1,5 +1,8 @@
 name: CI/Release
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main]
@@ -8,83 +11,131 @@ on:
   release:
     types: [released]
 
-jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            os_name: linux
-            arch: amd64
-            needs_upx: true
-          - os: macos-latest
-            os_name: darwin
-            arch: arm64
-            needs_upx: false
-          - os: windows-latest
-            os_name: windows
-            arch: amd64
-            ext: .exe
-            needs_upx: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
+permissions:
+  contents: write
+  id-token: write
+  security-events: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: v2026.4.11
+      - run: mise run lint
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: v2026.4.11
+      - run: mise run test
+
+  codeql:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: go
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+        with:
+          version: v2026.4.11
 
       - name: Get version
         id: version
         run: echo "VERSION=$(git describe --tags --always --dirty | sed 's/^v//')" >> $GITHUB_OUTPUT
 
-      - name: Setup mise
-        uses: jdx/mise-action@v2
+      - name: Build all binaries
+        run: mise run build-all
 
-      - name: Setup Go
-        run: mise use -g go@1.22
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Build
-        id: build
-        env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
-        shell: bash
+      - name: Generate SBOM
         run: |
-          rm -rf dist
-          mkdir -p dist
-          NAME="warp-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}${{ matrix.ext || '' }}"
-          go build -ldflags="-s -w" -o "dist/$NAME" ./cmd/warp
-          echo "artifact_name=$NAME" >> $GITHUB_OUTPUT
+          mkdir -p sbom
+          mise run sbom-go
+          mise run sbom-bin
 
-      - name: Install upx
-        if: matrix.needs_upx == true
-        shell: bash
-        run: mise use -g upx@latest
+      - name: Package artifacts
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          cd dist
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+            OS=$(echo $platform | cut -d- -f1)
+            ARCH=$(echo $platform | cut -d- -f2)
+            BINARY="warp-${platform}"
+            if [ "$OS" = "windows" ]; then
+              BINARY="${BINARY}.exe"
+            fi
+            if [ -f "$BINARY" ]; then
+              echo "→ Packaging warp-${VERSION}-${platform}"
+              if [ "$OS" = "windows" ]; then
+                tar -czf "warp-${VERSION}-${platform}.tar.gz" "$BINARY"
+              else
+                tar -czf "warp-${VERSION}-${platform}.tar.gz" "$BINARY"
+              fi
+              rm -f "$BINARY"
+            fi
+          done
 
-      - name: Compress with upx
-        if: matrix.needs_upx == true
-        shell: bash
-        env:
-          ARTIFACT_NAME: ${{ steps.build.outputs.artifact_name }}
-        run: upx "dist/$ARTIFACT_NAME"
-
-      - name: Upload artifact (PR/push)
-        if: github.event_name != 'release'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.build.outputs.artifact_name }}
-          path: dist/${{ steps.build.outputs.artifact_name }}
+          name: warp-artifacts
+          path: dist/*
 
-      - name: Upload to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+  release:
+    if: github.event_name == 'release'
+    needs: [build]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: dist/${{ steps.build.outputs.artifact_name }}
+          name: warp-artifacts
+          path: dist
+      - uses: jdx/mise-action@v4
+        with:
+          version: v2026.4.11
+      - name: Generate checksums and signatures
+        run: |
+          cd dist
+          sha256sum warp-*.tar.gz > checksums.txt
+          for f in warp-*.tar.gz; do
+            cosign sign-blob --yes "$f" --bundle "$f.bundle.json" 2>/dev/null || true
+          done
+          cosign sign-blob --yes checksums.txt --bundle checksums.txt.bundle.json 2>/dev/null || true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
