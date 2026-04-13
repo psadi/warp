@@ -17,7 +17,7 @@ run = """
 bash -c '
 set -e
 
-case "$(go env GOOS)" in
+case "$GOOS" in
   darwin)
     echo "Skipping UPX install on macOS"
     ;;
@@ -36,10 +36,16 @@ esac
 description = "Install UPX only on supported platforms"
 
 [tasks.build]
-env = { LDFLAGS = "-s -w" }
+env = { 
+  LDFLAGS = "-s -w",
+  GOOS = "{{env.GOOS}}",
+  GOARCH = "{{env.GOARCH}}"
+}
 run = """
 bash -c '
 set -e
+
+echo "GOOS=$GOOS GOARCH=$GOARCH"
 
 mise run install-upx
 
@@ -47,15 +53,17 @@ rm -rf dist
 mkdir -p dist
 
 EXT=""
-if [ "$(go env GOOS)" = "windows" ]; then
+if [ "$GOOS" = "windows" ]; then
   EXT=".exe"
 fi
 
-echo "Building for $(go env GOOS)/$(go env GOARCH)"
+echo "Building dist/warp${EXT}"
 
 go build -trimpath -ldflags="$LDFLAGS" -o "dist/warp${EXT}" ./cmd/warp
 
-case "$(go env GOOS)" in
+ls -la dist
+
+case "$GOOS" in
   darwin)
     echo "Skipping UPX compression on macOS"
     ;;
@@ -66,4 +74,3 @@ esac
 '
 """
 description = "Build warp binary"
-
