@@ -1,0 +1,69 @@
+[tools]
+go = "1.22"
+
+[tasks.test]
+run = "go test -race ./..."
+description = "Run test suite with race detector"
+
+[tasks.lint]
+run = """
+test -z "$(gofmt -l cmd internal)" && \
+go vet ./...
+"""
+description = "Check formatting + vet"
+
+[tasks.install-upx]
+run = """
+bash -c '
+set -e
+
+case "$(go env GOOS)" in
+  darwin)
+    echo "Skipping UPX install on macOS"
+    ;;
+  *)
+    if ! command -v upx >/dev/null 2>&1; then
+      echo "Installing UPX via mise..."
+      mise use -g upx@latest
+      mise install upx
+    else
+      echo "UPX already installed"
+    fi
+    ;;
+esac
+'
+"""
+description = "Install UPX only on supported platforms"
+
+[tasks.build]
+env = { LDFLAGS = "-s -w" }
+run = """
+bash -c '
+set -e
+
+mise run install-upx
+
+rm -rf dist
+mkdir -p dist
+
+EXT=""
+if [ "$(go env GOOS)" = "windows" ]; then
+  EXT=".exe"
+fi
+
+echo "Building for $(go env GOOS)/$(go env GOARCH)"
+
+go build -trimpath -ldflags="$LDFLAGS" -o "dist/warp${EXT}" ./cmd/warp
+
+case "$(go env GOOS)" in
+  darwin)
+    echo "Skipping UPX compression on macOS"
+    ;;
+  *)
+    upx "dist/warp${EXT}" || true
+    ;;
+esac
+'
+"""
+description = "Build warp binary"
+

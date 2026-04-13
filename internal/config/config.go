@@ -10,11 +10,18 @@ import (
 )
 
 type Host struct {
-	Name         string
-	HostName     string
-	User         string
-	Port         string
-	IdentityFile string
+	Name          string
+	HostName      string
+	User          string
+	Port          string
+	IdentityFile  string
+	IdentityFiles []string
+}
+
+type configBlock struct {
+	Raw         string
+	HostAliases []string
+	IsHost      bool
 }
 
 func GetSSHConfigPath() string {
@@ -34,8 +41,7 @@ func GetSSHConfigPath() string {
 }
 
 func ParseSSHConfig() ([]Host, error) {
-	configPath := GetSSHConfigPath()
-	return parseSSHConfigFile(configPath, nil)
+	return parseSSHConfigFile(GetSSHConfigPath(), nil)
 }
 
 func parseSSHConfigFile(filePath string, visitedPaths map[string]bool) ([]Host, error) {
@@ -58,63 +64,67 @@ func parseSSHConfigFile(filePath string, visitedPaths map[string]bool) ([]Host, 
 	defer file.Close()
 
 	var hosts []Host
-	var currentHost *Host
+	var currentHost Host
+	var currentAliases []string
 	scanner := bufio.NewScanner(file)
 
+	flush := func() {
+		for _, alias := range concreteAliases(currentAliases) {
+			host := currentHost
+			host.Name = alias
+			if len(host.IdentityFiles) > 0 {
+				host.IdentityFile = host.IdentityFiles[0]
+			}
+			hosts = append(hosts, host)
+		}
+		currentHost = Host{}
+		currentAliases = nil
+	}
+
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := scanner.Text()
+		key, value, ok := splitSSHDirective(line)
+		if !ok {
 			continue
 		}
-
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-
-		key := parts[0]
-		value := strings.Join(parts[1:], " ")
 
 		switch strings.ToLower(key) {
 		case "include":
-			includePath := expandPath(value, filepath.Dir(filePath))
-			includedHosts, err := parseSSHConfigFile(includePath, visitedPaths)
-			if err == nil {
-				hosts = append(hosts, includedHosts...)
+			for _, includePath := range parseIncludePaths(value, filepath.Dir(filePath)) {
+				includedHosts, includeErr := parseSSHConfigFile(includePath, visitedPaths)
+				if includeErr == nil {
+					hosts = append(hosts, includedHosts...)
+				}
 			}
 		case "host":
-			if currentHost != nil && currentHost.Name != "" {
-				hosts = append(hosts, *currentHost)
-			}
-			currentHost = &Host{Name: value}
+			flush()
+			currentAliases = parseSSHWords(value)
 		case "hostname":
-			if currentHost != nil {
-				currentHost.HostName = value
-			}
+			currentHost.HostName = SanitizeValue(value)
 		case "user":
-			if currentHost != nil {
-				currentHost.User = value
-			}
+			currentHost.User = SanitizeValue(value)
 		case "port":
-			if currentHost != nil {
-				currentHost.Port = value
-			}
+			currentHost.Port = SanitizeValue(value)
 		case "identityfile":
-			if currentHost != nil {
-				currentHost.IdentityFile = value
+			identity := SanitizeValue(value)
+			if identity != "" {
+				currentHost.IdentityFiles = append(currentHost.IdentityFiles, identity)
+				currentHost.IdentityFile = identity
 			}
 		}
 	}
 
-	if currentHost != nil && currentHost.Name != "" {
-		hosts = append(hosts, *currentHost)
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
+	flush()
 	return hosts, nil
 }
 
 func expandPath(path, baseDir string) string {
 	path = strings.TrimSpace(path)
+	path = unquote(path)
 	if strings.HasPrefix(path, "~") {
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
@@ -150,88 +160,45 @@ func GetSSHConnectString(host Host) string {
 }
 
 func AddHost(host Host) error {
-	configPath := GetSSHConfigPath()
-
-	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(GetSSHConfigPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	var sb strings.Builder
-	sb.WriteString("\n\nHost ")
-	sb.WriteString(host.Name)
-	sb.WriteString("\n    HostName ")
-	sb.WriteString(host.HostName)
-	sb.WriteString("\n    User ")
-	sb.WriteString(host.User)
-	if host.Port != "" && host.Port != "22" {
-		sb.WriteString("\n    Port ")
-		sb.WriteString(host.Port)
-	}
-	if host.IdentityFile != "" {
-		sb.WriteString("\n    IdentityFile ")
-		sb.WriteString(host.IdentityFile)
-	}
-	sb.WriteString("\n")
-
-	_, err = file.WriteString(sb.String())
+	_, err = file.WriteString(RenderHostBlock(host))
 	return err
 }
 
 func RemoveHosts(hostNames []string) error {
 	configPath := GetSSHConfigPath()
-
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
-
-	backupPath := configPath + ".bak"
-	if err := os.WriteFile(backupPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to create backup: %w", err)
-	}
-
-	lines := strings.Split(string(data), "\n")
-	var newLines []string
-	skipUntilNextHost := false
 
 	hostSet := make(map[string]bool)
 	for _, h := range hostNames {
 		hostSet[strings.ToLower(h)] = true
 	}
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "Host ") && !strings.HasPrefix(trimmed, "#") {
-			hostName := strings.TrimSpace(strings.TrimPrefix(trimmed, "Host "))
-
-			if hostSet[strings.ToLower(hostName)] {
-				skipUntilNextHost = true
-				continue
-			} else {
-				skipUntilNextHost = false
-			}
+	var sb strings.Builder
+	for _, block := range parseConfigBlocks(string(data)) {
+		if !block.IsHost {
+			sb.WriteString(block.Raw)
+			continue
 		}
 
-		if skipUntilNextHost {
-			if i+1 < len(lines) {
-				nextTrimmed := strings.TrimSpace(lines[i+1])
-				if strings.HasPrefix(nextTrimmed, "Host ") && !strings.HasPrefix(nextTrimmed, "#") {
-					skipUntilNextHost = false
-				}
-				continue
-			}
-		}
-
-		if !skipUntilNextHost {
-			newLines = append(newLines, line)
+		keepAliases := subtractAliases(block.HostAliases, hostSet)
+		switch {
+		case len(keepAliases) == len(block.HostAliases):
+			sb.WriteString(block.Raw)
+		case len(keepAliases) > 0:
+			sb.WriteString(rewriteHostDeclaration(block.Raw, keepAliases))
 		}
 	}
 
-	err = os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0600)
-	return err
+	return writeConfigFile(configPath, []byte(sb.String()))
 }
 
 func GetHostByName(hosts []Host, name string) *Host {
@@ -246,77 +213,344 @@ func GetHostByName(hosts []Host, name string) *Host {
 
 func UpdateHost(oldName string, newHost Host) error {
 	configPath := GetSSHConfigPath()
-
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
 	}
 
-	lines := strings.Split(string(data), "\n")
-	var newLines []string
-	inHostBlock := false
 	oldNameLower := strings.ToLower(oldName)
+	var sb strings.Builder
+	replaced := false
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "Host ") && !strings.HasPrefix(trimmed, "#") {
-			hostName := strings.TrimSpace(strings.TrimPrefix(trimmed, "Host "))
-
-			if strings.ToLower(hostName) == oldNameLower {
-				inHostBlock = true
-
-				newLines = append(newLines, "Host "+newHost.Name)
-				if newHost.HostName != "" {
-					newLines = append(newLines, "    HostName "+newHost.HostName)
-				}
-				if newHost.User != "" {
-					newLines = append(newLines, "    User "+newHost.User)
-				}
-				if newHost.Port != "" && newHost.Port != "22" {
-					newLines = append(newLines, "    Port "+newHost.Port)
-				}
-				if newHost.IdentityFile != "" {
-					newLines = append(newLines, "    IdentityFile "+newHost.IdentityFile)
-				}
-				continue
-			} else {
-				inHostBlock = false
-			}
-		}
-
-		if inHostBlock {
-			isHostKey := false
-			upperLine := strings.ToUpper(trimmed)
-			for _, key := range []string{"HOSTNAME", "USER", "PORT", "IDENTITYFILE"} {
-				if strings.HasPrefix(upperLine, key+" ") || upperLine == key {
-					isHostKey = true
-					break
-				}
-			}
-			if isHostKey {
-				continue
-			}
-			if trimmed == "" && i+1 < len(lines) {
-				nextTrimmed := strings.TrimSpace(lines[i+1])
-				upperNext := strings.ToUpper(nextTrimmed)
-				isNextHostKey := false
-				for _, key := range []string{"HOST ", "HOSTNAME", "USER", "PORT", "IDENTITYFILE"} {
-					if strings.HasPrefix(upperNext, key) {
-						isNextHostKey = true
-						break
-					}
-				}
-				if !isNextHostKey {
-					newLines = append(newLines, line)
-				}
-				continue
-			}
+	for _, block := range parseConfigBlocks(string(data)) {
+		if !block.IsHost || !containsAlias(block.HostAliases, oldNameLower) {
+			sb.WriteString(block.Raw)
 			continue
 		}
 
-		newLines = append(newLines, line)
+		replaced = true
+		if len(block.HostAliases) == 1 {
+			sb.WriteString(renderHostBlockWithoutLeadingSpacing(newHost))
+			continue
+		}
+
+		keepAliases := removeAlias(block.HostAliases, oldNameLower)
+		sb.WriteString(rewriteHostDeclaration(block.Raw, keepAliases))
+		if !strings.HasSuffix(sb.String(), "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(renderHostBlockWithoutLeadingSpacing(newHost))
 	}
 
-	return os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0600)
+	if !replaced {
+		return fmt.Errorf("host %q not found", oldName)
+	}
+	return writeConfigFile(configPath, []byte(sb.String()))
+}
+
+func RenderHostBlock(host Host) string {
+	return "\n\n" + renderHostBlockWithoutLeadingSpacing(host)
+}
+
+func SanitizeValue(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\r", "")
+	return unquote(value)
+}
+
+func QuoteValue(value string) string {
+	value = SanitizeValue(value)
+	if value == "" {
+		return value
+	}
+	if strings.ContainsAny(value, " \t\"") {
+		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	}
+	return value
+}
+
+func renderHostBlockWithoutLeadingSpacing(host Host) string {
+	var sb strings.Builder
+	sb.WriteString("Host ")
+	sb.WriteString(QuoteValue(host.Name))
+	sb.WriteString("\n")
+	if host.HostName != "" {
+		sb.WriteString("    HostName ")
+		sb.WriteString(QuoteValue(host.HostName))
+		sb.WriteString("\n")
+	}
+	if host.User != "" {
+		sb.WriteString("    User ")
+		sb.WriteString(QuoteValue(host.User))
+		sb.WriteString("\n")
+	}
+	if host.Port != "" && host.Port != "22" {
+		sb.WriteString("    Port ")
+		sb.WriteString(QuoteValue(host.Port))
+		sb.WriteString("\n")
+	}
+	identityFiles := host.IdentityFiles
+	if len(identityFiles) == 0 && host.IdentityFile != "" {
+		identityFiles = []string{host.IdentityFile}
+	}
+	for _, identity := range identityFiles {
+		if identity == "" {
+			continue
+		}
+		sb.WriteString("    IdentityFile ")
+		sb.WriteString(QuoteValue(identity))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func writeConfigFile(configPath string, data []byte) error {
+	current, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	backupPath := configPath + ".bak"
+	if err := os.WriteFile(backupPath, current, 0600); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+	return os.WriteFile(configPath, data, 0600)
+}
+
+func parseConfigBlocks(data string) []configBlock {
+	lines := strings.SplitAfter(data, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	var blocks []configBlock
+	var current strings.Builder
+	currentIsHost := false
+	var currentAliases []string
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		blocks = append(blocks, configBlock{
+			Raw:         current.String(),
+			HostAliases: append([]string(nil), currentAliases...),
+			IsHost:      currentIsHost,
+		})
+		current.Reset()
+		currentIsHost = false
+		currentAliases = nil
+	}
+
+	for _, line := range lines {
+		if isHostDeclaration(line) {
+			flush()
+			currentIsHost = true
+			currentAliases = parseHostAliasesFromLine(line)
+		} else if isNonHostStanzaDeclaration(line) {
+			flush()
+		}
+		current.WriteString(line)
+	}
+	flush()
+
+	return blocks
+}
+
+func isHostDeclaration(line string) bool {
+	key, _, ok := splitSSHDirective(line)
+	return ok && strings.EqualFold(key, "Host")
+}
+
+func isNonHostStanzaDeclaration(line string) bool {
+	key, _, ok := splitSSHDirective(line)
+	return ok && strings.EqualFold(key, "Match")
+}
+
+func parseHostAliasesFromLine(line string) []string {
+	_, value, ok := splitSSHDirective(line)
+	if !ok {
+		return nil
+	}
+	return parseSSHWords(value)
+}
+
+func parseIncludePaths(value, baseDir string) []string {
+	words := parseSSHWords(value)
+	var paths []string
+	seen := make(map[string]bool)
+
+	for _, word := range words {
+		expanded := expandPath(word, baseDir)
+		matches := []string{expanded}
+		if hasGlobMeta(expanded) {
+			globMatches, err := filepath.Glob(expanded)
+			if err == nil && len(globMatches) > 0 {
+				matches = globMatches
+			}
+		}
+		for _, match := range matches {
+			if !seen[match] {
+				seen[match] = true
+				paths = append(paths, match)
+			}
+		}
+	}
+
+	return paths
+}
+
+func splitSSHDirective(line string) (string, string, bool) {
+	trimmed := strings.TrimSpace(stripInlineComment(line))
+	if trimmed == "" {
+		return "", "", false
+	}
+
+	for i, r := range trimmed {
+		if r == ' ' || r == '\t' {
+			key := trimmed[:i]
+			value := strings.TrimSpace(trimmed[i+1:])
+			if value == "" {
+				return "", "", false
+			}
+			return key, value, true
+		}
+	}
+	return "", "", false
+}
+
+func stripInlineComment(line string) string {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == '#' && !inSingle && !inDouble:
+			return line[:i]
+		}
+	}
+	return line
+}
+
+func parseSSHWords(value string) []string {
+	var words []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		words = append(words, current.String())
+		current.Reset()
+	}
+
+	for _, r := range value {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case (r == ' ' || r == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+
+	for i := range words {
+		words[i] = SanitizeValue(words[i])
+	}
+
+	return words
+}
+
+func concreteAliases(aliases []string) []string {
+	var concrete []string
+	for _, alias := range aliases {
+		if alias != "" && !hasPattern(alias) {
+			concrete = append(concrete, alias)
+		}
+	}
+	return concrete
+}
+
+func hasPattern(alias string) bool {
+	return strings.ContainsAny(alias, "*?!")
+}
+
+func hasGlobMeta(path string) bool {
+	return strings.ContainsAny(path, "*?[")
+}
+
+func containsAlias(aliases []string, targetLower string) bool {
+	for _, alias := range aliases {
+		if strings.ToLower(alias) == targetLower {
+			return true
+		}
+	}
+	return false
+}
+
+func removeAlias(aliases []string, targetLower string) []string {
+	var out []string
+	for _, alias := range aliases {
+		if strings.ToLower(alias) != targetLower {
+			out = append(out, alias)
+		}
+	}
+	return out
+}
+
+func subtractAliases(aliases []string, removeSet map[string]bool) []string {
+	var out []string
+	for _, alias := range aliases {
+		if !removeSet[strings.ToLower(alias)] {
+			out = append(out, alias)
+		}
+	}
+	return out
+}
+
+func rewriteHostDeclaration(raw string, aliases []string) string {
+	lines := strings.SplitAfter(raw, "\n")
+	for i, line := range lines {
+		if !isHostDeclaration(line) {
+			continue
+		}
+		prefix := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		suffix := ""
+		if strings.HasSuffix(line, "\n") {
+			suffix = "\n"
+		}
+		lines[i] = prefix + "Host " + strings.Join(aliases, " ") + suffix
+		break
+	}
+	return strings.Join(lines, "")
+}
+
+func unquote(value string) string {
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
